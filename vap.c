@@ -615,7 +615,7 @@ void midiloop(void) {
 	// Print incoming MIDI byte as hex 
 	//printf("%02X ", ch);
 
-    if (ch & 0x80) {
+    if (ch & 0x80) { // https://github.com/SensoriumEmbedded/TeensyROM/blob/main/Source/C64/ASIDPlayer/source/ASIDPlayer.asm#L43
       switch (ch) {
       case SYSEX_STOP:
         (*stophandler)();
