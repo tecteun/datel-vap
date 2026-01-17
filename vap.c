@@ -18,8 +18,9 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
+
 #include "regid.h"
-#include "vessel.h"
+#include "datel.h"
 #include <6502.h>
 #include <c64.h>
 #include <stdint.h>
@@ -78,7 +79,6 @@ enum ASID_CMD {
   ASID_CMD_REU_STASH_BUFFER_RECT = 0x5e,
   ASID_CMD_REU_FETCH_BUFFER_RECT = 0x5f,
   ASID_CMD_REU_FILL_BUFFER_RECT = 0x60,
-  // TODO: REU fetch to rectangle.
   ASID_CMD_UPDATE_REG = 0x6c,
   ASID_CMD_UPDATE2_REG = 0x6d,
 };
@@ -290,6 +290,7 @@ void handleupdate() {
 #else
 #define HANDLE_FULL(X) &noop
 #endif
+
 
 void (*const asidstartcmdhandler[])(void) = {
     &noop,                                // 0
@@ -560,33 +561,6 @@ void __attribute__((interrupt)) _handle_nmi() {
 
 void __attribute__((interrupt)) _handle_irq() { ACK_CIA1_IRQ; }
 
-void initvessel(void) {
-  VOUT;
-  VRESET;
-  VIN;
-  VOUT;
-  VCMD(4); // config command
-#ifdef POLL
-  VW(4); // transparent mode
-#else
-  VW(1 + 4); // transparent mode with NMI
-#endif
-  VIN;
-  VOUT;
-}
-
-void set_cia_timer(uint16_t v) {
-  SEI();
-  CIA1.icr = 0b01111111; // disable all CIA1 interrupts
-  ACK_CIA1_IRQ;
-  CIA1.cra &= 0b11111110; // disable timer A
-  CIA1.icr = 0b10000001;  // enable timer A interrupt
-  volatile uint16_t *timer = (uint16_t *)(&CIA1.ta_lo);
-  *timer = v;
-  CIA1.cra = 0b10000001; // start timer A
-  CLI();
-}
-
 void init() {
   asm("jsr $e544"); // clear screen
   initsid();
@@ -598,18 +572,23 @@ void init() {
     putchar(*c++);
   }
   SEI();
-  R6510 = 0b00000101; // disable kernal + basic, makes new handlers visible
+  R6510 = 0b00000101; // disable kernal + basic
   NMI_VECTOR = (volatile uint16_t) & _handle_nmi;
   IRQ_VECTOR = (volatile uint16_t) & _handle_irq;
-  VIC.imr = 0; // disable VIC II interrupts.
+  VIC.imr = 0;
   ACK_VIC_IRQ;
-  CIA2.icr = 0b10010000; // set CIA2 interrupt source to FLAG2 only
+  CIA2.icr = 0b10010000;
   ACK_CIA2_IRQ;
-  // set_cia_timer(19656);
-  initvessel();
+  MIDI_CONTROL = 0x03; // (3)reset 
+  //MIDI_CONTROL = 0x16; // enable MIDI RX, 2 MHz mode
+  MIDI_CONTROL = 0x12; // (18) enable MIDI TX/RX, 2 MHz mode
+
+  //MIDI_CONTROL = 0x15; // enable MIDI RX, 2 MHz mode
+  //MIDI_CONTROL = 0x92;   // (146) Enable MIDI + IRQ + 2 MHz mode
 }
 
 void handle_cmd() {
+	//printf("cmd %02X ", ch);
   cmd = ch;
   datahandler = &noop;
   stophandler = &noop;
@@ -624,109 +603,91 @@ void handle_manid() {
   }
 }
 
-void midiloop(void) {
-#ifndef POLL
-  volatile unsigned char nmi_ack = 0;
-#endif
-  volatile unsigned char i = 0;
-  volatile unsigned char c = 0;
-
 #ifdef FULL
+
+void midiloop(void) {
+	printf("starting full");
   for (;;) {
-#ifndef POLL
-    if (nmi_in == nmi_ack) {
+    if (!MIDI_RX_READY)
       continue;
-    }
-#endif
-    VIN;
-    c = VR;
-    for (i = c; i; --i) {
-      buf[i] = VR;
-    }
-#ifndef POLL
-    nmi_ack = nmi_in;
-#endif
-    VOUT;
-    for (i = c; i; --i) {
-      ch = buf[i];
-      if (ch & 0x80) {
-        switch (ch) {
-        case SYSEX_STOP:
-          (*stophandler)();
-          break;
-        case SYSEX_START:
-          datahandler = &handle_manid;
-          break;
-        case NOTEOFF16:
-          datahandler = &handle_single_reg;
-          break;
-        case NOTEOFF15:
-          datahandler = &handle_single_reg2;
-          break;
-        default:
-          break;
-        }
-      } else {
-        datahandler();
+
+    ch = VR;
+	// Print incoming MIDI byte as hex 
+	//printf("%02X ", ch);
+
+    if (ch & 0x80) {
+      switch (ch) {
+      case SYSEX_STOP:
+        (*stophandler)();
+        break;
+      case SYSEX_START:
+        datahandler = &handle_manid;
+        break;
+      case NOTEOFF16:
+        datahandler = &handle_single_reg;
+        break;
+      case NOTEOFF15:
+        datahandler = &handle_single_reg2;
+        break;
+      default:
+        break;
       }
+    } else {
+      datahandler();
     }
   }
-#else
-  for (;;) {
-#ifndef POLL
-    if (nmi_in == nmi_ack) {
-      continue;
-    }
-    nmi_ack = nmi_in;
-#endif
-    for (;;) {
-      VIN;
-      c = VR;
-      if (c == 0) {
-        VOUT;
-        break;
-      }
-      while (c--) {
-        ch = VR;
-        ((unsigned char *)&asidupdate)[i++] = ch;
-        if (ch == SYSEX_STOP) {
-          i = 0;
-          break;
-        }
-      }
-      VOUT;
-      switch (asidupdate.cmd) {
-      case ASID_CMD_UPDATE:
-        updatesid();
-        break;
-      case ASID_CMD_UPDATE_REG:
-        asidupdateregsid(sidshadow);
-        sidfromshadow(sidshadow, SIDBASE);
-        break;
-      case ASID_CMD_UPDATE2:
-        updatesid2();
-        break;
-      case ASID_CMD_UPDATE2_REG:
-        asidupdateregsid(sidshadow2);
-        sidfromshadow(sidshadow2, SIDBASE2);
-        break;
-      case ASID_CMD_START:
-        handlestart();
-        break;
-      case ASID_CMD_STOP:
-        handlestop();
-        break;
-      }
-      if (c == 0) {
-        break;
-      }
-    }
-  }
-#endif
 }
 
+#else  // POLL mode
+
+void midiloop(void) {
+  unsigned char i = 0;
+
+  for (;;) {
+    while (MIDI_RX_READY) {
+      ch = VR;
+	  	// Print incoming MIDI byte as hex 
+	//printf("%02X ", ch);
+      ((unsigned char *)&asidupdate)[i++] = ch;
+      if (ch == SYSEX_STOP) {
+        i = 0;
+        break;
+      }
+    }
+
+    switch (asidupdate.cmd) {
+    case ASID_CMD_UPDATE:
+      updatesid();
+      break;
+    case ASID_CMD_UPDATE_REG:
+      asidupdateregsid(sidshadow);
+      sidfromshadow(sidshadow, SIDBASE);
+      break;
+    case ASID_CMD_UPDATE2:
+      updatesid2();
+      break;
+    case ASID_CMD_UPDATE2_REG:
+      asidupdateregsid(sidshadow2);
+      sidfromshadow(sidshadow2, SIDBASE2);
+      break;
+    case ASID_CMD_START:
+      handlestart();
+      break;
+    case ASID_CMD_STOP:
+      handlestop();
+      break;
+    }
+  }
+}
+
+#endif
+
 int main(void) {
+
+  	printf("\n");
+	printf("init\n");
   init();
+  printf("starting midiloop\n");
   midiloop();
   return 0;
 }

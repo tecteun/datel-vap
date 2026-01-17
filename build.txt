@@ -1,0 +1,1 @@
+C:\Users\tecteun\Downloads\llvm-mos-windows\llvm-mos\bin\mos-c64-clang -Wall -O3 -fnonreentrant -flto -DVERSION=\"v1.0\" -DFULL -o vap-full.prg vap.c
