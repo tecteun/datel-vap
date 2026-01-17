@@ -1,8 +1,13 @@
-# vap
-Vessel ASID Player
+# datel-vap
+Datel ASID Player
 ==================
 
-VAP enables remote access to SID registers over MIDI SysEx messages, using the [ASID](http://paulus.kapsi.fi/asid_protocol.txt)
+Datel ASID player, tested using [C64Nano](https://github.com/MiSTle-Dev/C64Nano)
+
+----
+Forked from Anarkiwi, Many Thanks, great project!
+
+Datel-VAP enables remote access to SID registers over MIDI SysEx messages, using the [ASID](http://paulus.kapsi.fi/asid_protocol.txt)
 protocol, which was introduced with the Elektron SIDStation.  Any SID player supporting ASID can use this
 application with Vessel as a C64 hardware sound source.
 
